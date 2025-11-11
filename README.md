@@ -10,7 +10,7 @@ Market basket analysis and a rule-based recommender built from the Bread Basket 
 
    ```bash
    git clone https://github.com/NumanBashir/Group60_DataScience_BreadBasket bread-basket-group60
-   cd eafc26-role-atlas
+   cd bread-basket-group60
 
    python -m venv .venv
    # mac/linux
