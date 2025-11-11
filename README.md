@@ -1,6 +1,6 @@
-# EAFC26 Player Role Atlas
+# Bread Basket Recommender System
 
-Cluster EAFC26 players into interpretable role archetypes per position family (DF/MF/FW; GK separate), evaluate with silhouette/DBI, and visualize with a 2D UMAP role map.
+Market basket analysis and a rule-based recommender built from the Bread Basket café transaction dataset.
 
 ---
 
@@ -9,7 +9,7 @@ Cluster EAFC26 players into interpretable role archetypes per position family (D
 1. **Clone and create a virtual env**
 
    ```bash
-   git clone https://github.com/NumanBashir/EAFC26_PlayerRoleAtlas eafc26-role-atlas
+   git clone https://github.com/NumanBashir/Group60_DataScience_BreadBasket bread-basket-group60
    cd eafc26-role-atlas
 
    python -m venv .venv
