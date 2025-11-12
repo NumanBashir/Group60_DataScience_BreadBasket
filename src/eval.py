@@ -1,4 +1,5 @@
 import argparse
+import ast
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -9,13 +10,13 @@ from mlxtend.preprocessing import TransactionEncoder
 
 
 # This method loads baskets from a Parquet or CSV file and returns a list of baskets
-def load_baskets(path="data/processed/baskets.parquet"):
-    if path.endswith(".parquet"):
-        df = pd.read_parquet(path)
-    else:
+def load_baskets(path="data/processed/baskets.csv"):
+    if path.endswith(".csv"):
         df = pd.read_csv(path, converters={
-            "items": lambda x: eval(x) if isinstance(x, str) else x
+            "items": lambda x: ast.literal_eval(x)
         })
+    else:
+        df = pd.read_parquet(path)
 
     # Auto-detect item column ("items", "Item", etc.)
     item_col = None
@@ -133,7 +134,7 @@ def apk(held_out, recs, k):
 
 
 def main(
-    baskets_path="data/processed/baskets.parquet",
+    baskets_path="data/processed/baskets.csv",
     min_support=0.01,
     min_conf=0.2,
     k=10,
@@ -221,7 +222,7 @@ def main(
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--baskets_path", type=str, default="data/processed/baskets.parquet")
+    ap.add_argument("--baskets_path", type=str, default="data/processed/baskets.csv")
     ap.add_argument("--min_support", type=float, default=0.01)
     ap.add_argument("--min_conf", type=float, default=0.2)
     ap.add_argument("--k", type=int, default=10)
