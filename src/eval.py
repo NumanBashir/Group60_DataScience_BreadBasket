@@ -18,7 +18,6 @@ def load_baskets(path="data/processed/baskets.csv"):
     else:
         df = pd.read_parquet(path)
 
-    # Auto-detect item column ("items", "Item", etc.)
     item_col = None
     for c in df.columns:
         if any(s in c.lower() for s in ["item", "items", "basket"]):
@@ -28,13 +27,12 @@ def load_baskets(path="data/processed/baskets.csv"):
     if item_col is None:
         raise ValueError(f"⚠️ No items column found in {df.columns}")
 
-    # Convert to Python lists
     baskets = df[item_col].apply(lambda x: x if isinstance(x, list) else eval(x)).tolist()
     return baskets
 
 
 
-# This method mines association rules from the given baskets using the apriori algorithm
+# Mine association rules from the given baskets using the apriori algorithm
 def mine_rules_from_baskets(
     baskets, min_support=0.01, min_conf=0.2, allow_multi_ante=True
 ):
@@ -53,18 +51,16 @@ def mine_rules_from_baskets(
     if len(rules) == 0:
         return {}, pd.DataFrame()
 
-    # Normalize antecedents/consequents to tuples and keep single-consequent rules
     rules["antecedents"] = rules["antecedents"].apply(lambda s: tuple(sorted(s)))
     rules["consequents"] = rules["consequents"].apply(lambda s: tuple(sorted(s)))
     rules = rules[rules["consequents"].apply(len) == 1].copy()
     if len(rules) == 0:
         return {}, pd.DataFrame()
 
-    # Optional: only single-item antecedents (simpler) vs allow multi (better when available)
     if not allow_multi_ante:
         rules = rules[rules["antecedents"].apply(len) == 1].copy()
 
-    # (Recommended) Keep only positively associated rules
+    # Keep only positively associated rules
     rules = rules[rules["lift"] > 1].copy()
     if len(rules) == 0:
         return {}, pd.DataFrame()
@@ -72,7 +68,6 @@ def mine_rules_from_baskets(
     rules["conseq"] = rules["consequents"].apply(lambda t: t[0])
     rules = rules.sort_values(["lift", "confidence"], ascending=False)
 
-    # Score blend: emphasize lift (usefulness) + confidence (reliability)
     def score_row(r):
         return 0.7 * r["lift"] + 0.3 * r["confidence"]
 
@@ -82,14 +77,13 @@ def mine_rules_from_baskets(
         s = score_row(r)
         table[a].append((r["conseq"], s))
 
-    # Keep top-N per antecedent to avoid bloat
     for a in list(table.keys()):
         table[a] = sorted(table[a], key=lambda x: -x[1])[:50]
 
     return dict(table), rules
 
 
-# This method recommends items based on the given context using the mined rules
+# Recommend items based on the given context using the mined rules
 def recommend_rules(context_items, rule_table, k=10):
     """
     Recommend using subset match: any rule whose antecedent ⊆ context.
@@ -106,25 +100,25 @@ def recommend_rules(context_items, rule_table, k=10):
     return [c for c, _ in sorted(cand.items(), key=lambda x: -x[1])[:k]]
 
 
-# This method computes the top-k popular items from the training baskets
+# Compute the top-k popular items from the training baskets
 def popularity_topk(train_baskets, k=10):
     cnt = Counter(i for b in train_baskets for i in set(b))
     return [i for i, _ in cnt.most_common(k)]
 
 
-# This method recommends items based on popularity, excluding context items
+# Recommend items based on popularity, excluding context items
 def recommend_pop(context_items, pop_list, k=10):
     context = set(context_items)
     recs = [i for i in pop_list if i not in context]
     return recs[:k]
 
 
-# This method computes HitRate@k
+# Compute HitRate@k
 def hitrate_at_k(held_out, recs, k):
     return 1.0 if held_out in set(recs[:k]) else 0.0
 
 
-# This method computes Average Precision at k (APK)
+# Compute Average Precision at k (APK)
 def apk(held_out, recs, k):
     # Average precision at k for single held-out item simplifies to 1/rank if found
     for idx, item in enumerate(recs[:k], start=1):
@@ -160,7 +154,6 @@ def main(
     total_cases_pop = 0
 
     for b in test:
-        # leave-one-out over items in basket (only for baskets with at least 2 items)
         if len(b) < 2:
             continue
         for held_out in b:
@@ -199,9 +192,7 @@ def main(
     res = pd.DataFrame(records)
     summary = res.groupby("model").agg(hit_rate=("hit", "mean"), MAP_at_k=("apk", "mean")).reset_index()
 
-    # Coverage: fraction of LOO cases where model produced candidates
-    # (Note: same number of potential cases for both models)
-    potential_cases = sum(max(len(b) - 1, 0) for b in test)  # leave-one-out per item
+    potential_cases = sum(max(len(b) - 1, 0) for b in test)
     cov_rules = total_cases_rules / potential_cases if potential_cases else 0.0
     cov_pop = total_cases_pop / potential_cases if potential_cases else 0.0
 

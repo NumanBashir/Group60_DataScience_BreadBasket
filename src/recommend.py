@@ -21,29 +21,25 @@ def load_rules(path="outputs/rules.csv", top_per_ante=50):
         "consequents": parse_set
     })
 
-    # Extract single consequent for simplicity
     rules["conseq"] = rules["consequents"].apply(
         lambda t: list(t)[0] if len(t) == 1 else None
     )
     rules = rules.dropna(subset=["conseq"])
 
-    # Sort by lift + confidence
     rules = rules.sort_values(["lift", "confidence"], ascending=False)
 
-    # Build rule lookup: antecedent tuple -> [(consequent, score)]
     table = defaultdict(list)
     for _, r in rules.iterrows():
         a = tuple(r["antecedents"])  # ✅ multi-item compatible
         score = 0.7 * r["lift"] + 0.3 * r["confidence"]
         table[a].append((r["conseq"], score))
 
-    # Keep top N per antecedent
     return {
         a: sorted(v, key=lambda x: -x[1])[:top_per_ante]
         for a, v in table.items()
     }, rules
 
-
+# Recommend items with detailed info for logging/debugging
 def recommend_verbose(basket, rules, k=5):
     recs = []
 
@@ -68,8 +64,7 @@ def recommend_verbose(basket, rules, k=5):
                 "lift": round(lift, 3),
                 "label": label
             })
-
-    # Sort by lift descending
+    
     recs = sorted(recs, key=lambda x: -x["lift"])[:k]
     return recs
 
@@ -77,7 +72,7 @@ def recommend_verbose(basket, rules, k=5):
 if __name__ == "__main__":
     rule_table, rules = load_rules("outputs/rules.csv")
 
-    basket = ["Cake"]  # Insert items in the basket here
+    basket = ["Cake"]
     recommendations = recommend_verbose(basket, rules)
 
     print(f"\nRecommendations for basket: {basket}")

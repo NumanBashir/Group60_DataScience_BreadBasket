@@ -24,3 +24,11 @@ Market basket analysis and a rule-based recommender built from the Bread Basket 
    ```bash
    pip install -r requirements.txt
    ```
+
+3. **Run scripts**
+
+   For each of the script run the following + _filename_:
+
+   ```bash
+   python src/*
+   ```
