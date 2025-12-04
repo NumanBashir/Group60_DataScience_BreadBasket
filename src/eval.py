@@ -2,19 +2,22 @@ import argparse
 import ast
 from collections import Counter, defaultdict
 from pathlib import Path
-
+import random
 import numpy as np
 import pandas as pd
 from mlxtend.frequent_patterns import apriori, association_rules
 from mlxtend.preprocessing import TransactionEncoder
+from keras import layers, models, optimizers
+import warnings
+import os
 
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 # This method loads baskets from a Parquet or CSV file and returns a list of baskets
 def load_baskets(path="data/processed/baskets.csv"):
     if path.endswith(".csv"):
-        df = pd.read_csv(path, converters={
-            "items": lambda x: ast.literal_eval(x)
-        })
+        df = pd.read_csv(path, converters={"items": lambda x: ast.literal_eval(x)})
     else:
         df = pd.read_parquet(path)
 
@@ -83,6 +86,7 @@ def mine_rules_from_baskets(
     return dict(table), rules
 
 
+
 # Recommend items based on the given context using the mined rules
 def recommend_rules(context_items, rule_table, k=10):
     """
@@ -100,10 +104,12 @@ def recommend_rules(context_items, rule_table, k=10):
     return [c for c, _ in sorted(cand.items(), key=lambda x: -x[1])[:k]]
 
 
+
 # Compute the top-k popular items from the training baskets
 def popularity_topk(train_baskets, k=10):
     cnt = Counter(i for b in train_baskets for i in set(b))
     return [i for i, _ in cnt.most_common(k)]
+
 
 
 # Recommend items based on popularity, excluding context items
@@ -113,9 +119,11 @@ def recommend_pop(context_items, pop_list, k=10):
     return recs[:k]
 
 
+
 # Compute HitRate@k
 def hitrate_at_k(held_out, recs, k):
     return 1.0 if held_out in set(recs[:k]) else 0.0
+
 
 
 # Compute Average Precision at k (APK)
@@ -126,6 +134,123 @@ def apk(held_out, recs, k):
             return 1.0 / idx
     return 0.0
 
+
+
+def extract_rule_features(context, candidate, rule_table, rule_df, pop_dict, time_dict=None):
+    ctx = set(context)
+    feats = {}
+
+    matching = rule_df[rule_df["conseq"] == candidate]
+    matching = matching[matching["antecedents"].apply(lambda a: set(a).issubset(ctx))]
+
+    if len(matching) == 0:
+        feats["max_lift"] = 0.0
+        feats["max_conf"] = 0.0
+        feats["max_support"] = 0.0
+        feats["num_rules"] = 0.0
+        feats["antecedent_size"] = 0.0
+        feats["rule_score"] = 0.0
+    else:
+        feats["max_lift"] = float(matching["lift"].max())
+        feats["max_conf"] = float(matching["confidence"].max())
+        feats["max_support"] = float(matching["support"].max())
+        feats["num_rules"] = float(len(matching))
+        feats["antecedent_size"] = float(matching["antecedents"].apply(len).max())
+        feats["rule_score"] = float(0.7 * matching["lift"].max() + 0.3 * matching["confidence"].max())
+
+    feats["context_size"] = float(len(context))
+
+    # === NEW TIME FEATURES ===
+    if time_dict is not None:
+        period, weekend = time_dict.get(candidate, ("unknown", "unknown"))
+
+        feats["is_morning"] = 1.0 if period == "morning" else 0.0
+        feats["is_afternoon"] = 1.0 if period == "afternoon" else 0.0
+        feats["is_night"] = 1.0 if period == "night" else 0.0
+
+        feats["is_weekend"] = 1.0 if weekend == "weekend" else 0.0
+    else:
+        feats["is_morning"] = 0.0
+        feats["is_afternoon"] = 0.0
+        feats["is_night"] = 0.0
+        feats["is_weekend"] = 0.0
+
+    return feats
+
+def build_training_matrix(train, rule_table, rule_df, pop_dict, time_dict, num_neg=3):
+    X = []
+    y = []
+    all_items = list(pop_dict.keys())
+
+    for basket in train:
+        if len(basket) < 2:
+            continue
+
+        for held_out in basket:
+            context = [i for i in basket if i != held_out]
+
+            feats = extract_rule_features(context, held_out, rule_table, rule_df, pop_dict, time_dict)
+            feat_order = list(feats.keys())
+            X.append([feats[f] for f in feat_order])
+            y.append(1)
+
+            # === OPTION A NEGATIVE SAMPLING (your request) ===
+            for _ in range(num_neg):
+                neg = random.choice(all_items)
+                if neg == held_out or neg in context:
+                    continue
+                feats_neg = extract_rule_features(context, neg, rule_table, rule_df, pop_dict, time_dict)
+                X.append([feats_neg[f] for f in feat_order])
+                y.append(0)
+
+    return np.array(X, dtype=np.float32), np.array(y, dtype=np.float32), feat_order
+
+def build_rule_dense_model(num_features):
+    inp = layers.Input(shape=(num_features,))
+    x = layers.Dense(16, activation="relu")(inp)
+    x = layers.Dense(8, activation="relu")(x)
+    out = layers.Dense(1, activation="sigmoid")(x)
+    model = models.Model(inp, out)
+    opt = optimizers.Adam(learning_rate=0.00005)
+
+    model.compile(
+        optimizer=opt,
+        loss="binary_crossentropy",
+        metrics=["accuracy"]
+    )
+    return model
+
+def recommend_dense(context, model, rule_table, rule_df, pop_dict, feat_names, time_dict, k=10):
+    candidates = [item for item in pop_dict.keys() if item not in context]
+    if not candidates:
+        return []
+
+    X_rows = []
+    for item in candidates:
+        feats = extract_rule_features(context, item, rule_table, rule_df, pop_dict)
+        X_rows.append([feats[f] for f in feat_names])
+
+    X = np.array(X_rows, dtype=np.float32)
+    scores = model.predict(X, verbose=0).flatten()
+
+    scored_items = list(zip(candidates, scores))
+    scored_items.sort(key=lambda x: -x[1])
+
+    topk = [item for item, _ in scored_items[:k]]
+    return topk
+
+def load_time_features(raw_path="../data/raw/bread_basket.csv"):
+    df = pd.read_csv(raw_path)
+
+    df["period_day"] = df["period_day"].astype(str)
+    df["weekday_weekend"] = df["weekday_weekend"].astype(str)
+
+    mapping = {}
+    for _, row in df.iterrows():
+        item = row["Item"]
+        mapping[item] = (row["period_day"], row["weekday_weekend"])
+
+    return mapping
 
 def main(
     baskets_path="data/processed/baskets.csv",
@@ -138,20 +263,77 @@ def main(
     Path(out_dir).mkdir(parents=True, exist_ok=True)
 
     baskets = load_baskets(baskets_path)
+    time_dict = load_time_features()
     n = len(baskets)
     cut = int(0.8 * n)
     train, test = baskets[:cut], baskets[cut:]
 
-    # Mine on TRAIN only
     rule_table, rules_df = mine_rules_from_baskets(
         train, min_support=min_support, min_conf=min_conf, allow_multi_ante=allow_multi_ante
     )
 
-    pop_list = popularity_topk(train, k*3)  # take a little extra then filter per context
+    pop_list = popularity_topk(train, k * 3)
+    pop_dict = Counter(i for b in train for i in set(b))
+
+    X_train, y_train, feat_names = build_training_matrix(train, rule_table, rules_df, pop_dict, time_dict)
+
+    model = build_rule_dense_model(X_train.shape[1])
+
+    model.fit(
+        X_train,
+        y_train,
+        epochs=15,
+        batch_size=64,
+        validation_split=0.1,
+        verbose=1
+    )
+
+    print("\n=== Example Dense Predictions ===")
+
+    for _ in range(5):
+        basket = random.choice(test)
+        if len(basket) < 2:
+            continue
+
+        held_out = random.choice(basket)
+        context = [x for x in basket if x != held_out]
+
+        # Compute probability for ALL items
+        scores = {}
+        for item in pop_dict.keys():
+            if item in context:
+                continue
+            feats = extract_rule_features(context, item, rule_table, rules_df, pop_dict)
+            x = np.array([[feats[f] for f in feat_names]], dtype=np.float32)
+            score = float(model.predict(x, verbose=0)[0][0])
+            scores[item] = score
+
+        top5 = sorted(scores.items(), key=lambda x: -x[1])[:5]
+
+        print(f"\nContext: {context}")
+        print(f"Held-out (true): {held_out}")
+        print("Dense model top-5:")
+        for item, sc in top5:
+            print(f"  {item:20s}  score={sc:.4f}")
+
+    print("\n=== Feature Importance (Dense Model) ===")
+    weights = model.layers[1].get_weights()[0].flatten()
+    feat_importance = sorted(zip(feat_names, weights), key=lambda x: -abs(x[1]))
+
+    for name, w in feat_importance:
+        print(f"{name:20s}  weight={w:.4f}")
 
     records = []
     total_cases_rules = 0
     total_cases_pop = 0
+
+    # Print learned feature importance
+    weights = model.layers[1].get_weights()[0].flatten()
+    feat_importance = sorted(zip(feat_names, weights), key=lambda x: -abs(x[1]))
+
+    print("\n=== Feature Importance (Dense Model) ===")
+    for name, w in feat_importance:
+        print(f"{name:20s}  weight = {w:.4f}")
 
     for b in test:
         if len(b) < 2:
@@ -159,7 +341,6 @@ def main(
         for held_out in b:
             context = [x for x in b if x != held_out]
 
-            # Rules
             rec_rules = recommend_rules(context, rule_table, k=k)
             if rec_rules:
                 total_cases_rules += 1
@@ -172,7 +353,6 @@ def main(
                     }
                 )
 
-            # Popularity baseline
             rec_pop = recommend_pop(context, pop_list, k=k)
             if rec_pop:
                 total_cases_pop += 1
@@ -184,6 +364,16 @@ def main(
                         "context_size": len(context),
                     }
                 )
+
+            rec_dense = recommend_dense(context, model, rule_table, rules_df, pop_dict, feat_names, time_dict, k=k)
+            records.append(
+                {
+                    "model": "dense",
+                    "hit": hitrate_at_k(held_out, rec_dense, k),
+                    "apk": apk(held_out, rec_dense, k),
+                    "context_size": len(context),
+                }
+            )
 
     if not records:
         print("No evaluation cases collected. Check rules mining thresholds or data.")
@@ -201,24 +391,24 @@ def main(
     print(f"Rules mined: {0 if rules_df is None or len(rules_df)==0 else len(rules_df)}")
     print("\nMetrics (k = %d):" % k)
     for _, row in summary.iterrows():
-        model = row["model"]
-        print(f"{model:10s} — HitRate@{k}: {row['hit_rate']:.3f} | MAP@{k}: {row['MAP_at_k']:.3f}")
+        model_name = row["model"]
+        print(f"{model_name:10s} — HitRate@{k}: {row['hit_rate']:.3f} | MAP@{k}: {row['MAP_at_k']:.3f}")
     print(f"\nCoverage — rules: {cov_rules:.3f} | popularity: {cov_pop:.3f}")
 
-    # Save detailed results
     res.to_csv(f"{out_dir}/eval_cases.csv", index=False)
     summary.to_csv(f"{out_dir}/eval_summary.csv", index=False)
     print(f"\nSaved: {out_dir}/eval_cases.csv and {out_dir}/eval_summary.csv")
 
 
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--baskets_path", type=str, default="data/processed/baskets.csv")
+    ap.add_argument("--baskets_path", type=str, default="../data/processed/baskets.csv")
     ap.add_argument("--min_support", type=float, default=0.01)
     ap.add_argument("--min_conf", type=float, default=0.2)
     ap.add_argument("--k", type=int, default=10)
     ap.add_argument("--allow_multi_ante", action="store_true", help="use multi-item antecedents if present")
-    ap.add_argument("--out_dir", type=str, default="outputs/tables")
+    ap.add_argument("--out_dir", type=str, default="../outputs/tables")
     args = ap.parse_args()
 
     main(

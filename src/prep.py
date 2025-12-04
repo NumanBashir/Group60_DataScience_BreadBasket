@@ -31,8 +31,8 @@ def main(input_csv, out_parquet, out_csv):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--input", default="data/raw/bread_basket.csv")
-    ap.add_argument("--out_parquet", default="data/processed/baskets.parquet")
-    ap.add_argument("--out_csv", default="data/processed/baskets.csv")
+    ap.add_argument("--input", default="../data/raw/bread_basket.csv")
+    ap.add_argument("--out_parquet", default="../data/processed/baskets.parquet")
+    ap.add_argument("--out_csv", default="../data/processed/baskets.csv")
     args = ap.parse_args()
     main(args.input, args.out_parquet, args.out_csv)

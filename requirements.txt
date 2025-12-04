@@ -4,3 +4,7 @@ mlxtend
 scikit-learn
 matplotlib
 pyyaml
+pyarrow
+tensorflow
+random
+tensorflow-keras
