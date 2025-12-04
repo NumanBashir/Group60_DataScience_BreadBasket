@@ -1,7 +1,12 @@
 # Bread Basket Recommender System
 
-Market basket analysis and a rule-based recommender built from the Bread Basket café transaction dataset.
+A data-driven recommender system built from The Bread Basket Café dataset using Apriori, association rules, and logistic regression.
 
+Numan Bashir (s204465)
+Mikail Güzel (s254261)
+Vaneeza Fatima Butt (s205835)
+
+Group 60 — DTU Course 02807 Computational Tools for Data Science
 ---
 
 ## Setup & Run
